@@ -1,0 +1,1 @@
+"""Frontend utilities module initialization file""" 

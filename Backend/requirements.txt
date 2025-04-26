@@ -1,0 +1,29 @@
+# FastAPI and related packages
+fastapi
+uvicorn
+python-multipart
+pydantic
+aiofiles
+
+# Document processing
+pdf2image
+pytesseract
+openpyxl
+
+# Vector search
+pymilvus
+sentence-transformers
+fuzzywuzzy
+python-Levenshtein
+
+# LangChain and related
+langchain
+langchain_community
+langchain-core
+langchain-huggingface
+huggingface-hub
+
+# Utilities
+tqdm
+requests
+python-dotenv

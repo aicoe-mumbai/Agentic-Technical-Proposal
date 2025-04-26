@@ -1,0 +1,173 @@
+from pymilvus import connections, Collection
+from sentence_transformers import SentenceTransformer
+from fuzzywuzzy import fuzz
+from typing import Dict, List, Tuple, Optional, Union, Any
+from langchain_core.documents import Document
+from langchain_community.vectorstores import Milvus
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+import os
+from Backend.app.core.config import MILVUS_HOST, MILVUS_PORT, MODEL_PATH
+from Backend.app.api.documents import active_documents
+
+# Search parameters for Milvus
+search_params = {"metric_type": "L2", "params": {"ef": 100}}
+
+def get_embedding_model():
+    """Get the sentence transformer embedding model"""
+    try:
+        return SentenceTransformer(MODEL_PATH)
+    except Exception as e:
+        # Fallback to HuggingFace embeddings via LangChain
+        return HuggingFaceEmbeddings(model_name=MODEL_PATH)
+
+def process_query(
+    user_input: str, 
+    collection_name: str = "DEC", 
+    result_range: Tuple[int, int] = (1, 3)
+) -> str:
+    """
+    Process query against Milvus vector database and return results
+    
+    Args:
+        user_input: User's query string
+        collection_name: Name of the Milvus collection to search
+        result_range: Tuple of (start_index, end_index) to slice results
+        
+    Returns:
+        Formatted string with search results
+    """
+    # Connect to Milvus server
+    connections.connect("default", host=MILVUS_HOST, port=MILVUS_PORT)
+
+    # Check if the collection exists
+    try:
+        collection = Collection(collection_name)
+    except Exception as e:
+        return f"Error: Collection '{collection_name}' not found. Ensure the collection exists and the name is correct. Error: {str(e)}"
+
+    # Load the collection
+    try:
+        collection.load()
+    except Exception as e:
+        return f"Error loading collection: {str(e)}"
+
+    # Check if the necessary fields exist
+    schema_fields = [field.name for field in collection.schema.fields]
+    required_fields = ["vector", "text"]
+    missing_fields = [field for field in required_fields if field not in schema_fields]
+
+    if missing_fields:
+        return f"Error: Missing required fields in collection schema: {', '.join(missing_fields)}"
+
+    # Generate embedding vector from the user input
+    try:
+        embedding_model = get_embedding_model()
+        query_vector = embedding_model.encode([user_input]).tolist()
+    except Exception as e:
+        return f"Error generating embedding vector: {str(e)}"
+    
+    # No filtering expression by default
+    expr = None
+
+    try:
+        search_results = collection.search(
+            data=query_vector,
+            anns_field="vector",
+            param=search_params,
+            limit=50,  # Fetch enough results to allow slicing
+            output_fields=["text"],
+            consistency_level="Strong",
+            expr=expr
+        )
+    except Exception as e:
+        return f"Error during search: {str(e)}"
+
+    # Extract and format the search results
+    all_hits = []
+    for hits in search_results:
+        all_hits.extend(hits)
+    
+    # Handle result slicing based on the provided range
+    if result_range:
+        start_idx, end_idx = result_range
+        sliced_hits = all_hits[start_idx:end_idx]
+    else:
+        sliced_hits = all_hits
+
+    if not sliced_hits:
+        return "No results found for the given query and filters."
+
+    context = '\n---\n'.join(
+        f"Text:</b> {hit.entity.get('text')}"
+        for hit in sliced_hits
+    )
+    return context
+
+def get_best_match_value(input_string: str, data_dict: Dict[str, str], threshold: float = 0.8) -> str:
+    """
+    Find the best matching value from a dictionary using fuzzy matching
+    
+    Args:
+        input_string: The input string to match
+        data_dict: Dictionary of key-value pairs to match against
+        threshold: Threshold score (0-1) for accepting a match
+        
+    Returns:
+        The best matching value or a default message
+    """
+    best_value = None
+    highest_score = 0
+    for key, value in data_dict.items():
+        score = fuzz.ratio(input_string.lower(), key.lower())
+        if score > highest_score:
+            highest_score = score
+            best_value = value
+    if highest_score >= threshold * 100:
+        return best_value
+    else:
+        return "No Template found for this topic."
+
+def initialize_vector_db(documents: List[Document], collection_name: str = "DEC") -> bool:
+    """
+    Initialize the vector database with documents
+    
+    Args:
+        documents: List of Document objects to store
+        collection_name: Name of the collection to create or update
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Get document ID from first document's source
+        doc_id = os.path.basename(documents[0].metadata["source"])
+        
+        # Update status to show vector DB initialization
+        if doc_id in active_documents:
+            active_documents[doc_id].update({
+                "status": "processing",
+                "message": "Initializing vector database",
+                "progress": 90  # Text extraction is complete at this point
+            })
+        
+        embeddings = HuggingFaceEmbeddings(model_name=MODEL_PATH)
+        Milvus.from_documents(
+            documents, 
+            embeddings, 
+            collection_name=collection_name,
+            drop_old=True, 
+            connection_args={"uri": f"http://{MILVUS_HOST}:{MILVUS_PORT}"}
+        )
+        
+        # Update status to show completion
+        if doc_id in active_documents:
+            active_documents[doc_id].update({
+                "status": "processed",
+                "message": "Document processed successfully",
+                "progress": 100
+            })
+            
+        return True
+    except Exception as e:
+        print(f"Error initializing vector database: {str(e)}")
+        return False
