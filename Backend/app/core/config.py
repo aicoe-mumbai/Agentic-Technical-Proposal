@@ -19,7 +19,7 @@ MILVUS_PORT = "19530"
 
 # Model settings
 MODEL_PATH = os.path.join(BASE_DIR, "models/sentence_transformer")
-LLM_ENDPOINT = "http://172.16.34.235:8080"
+LLM_ENDPOINT = "http://localhost:8080"
 
 # Create necessary directories
 for directory in [PROJECTS_DIR, UPLOADS_DIR]:

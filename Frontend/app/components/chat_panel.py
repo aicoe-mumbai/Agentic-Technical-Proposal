@@ -52,7 +52,7 @@ def render_chat_panel(document_info: Dict[str, Any], template_name: str):
         st.session_state.chat_history.append({"user": user_input})
         
         # Get response from API
-        with st.sidebar.spinner("Thinking..."):
+        with st.spinner("Thinking..."):
             response = api_client.chat_with_document(
                 filename, 
                 template_name, 

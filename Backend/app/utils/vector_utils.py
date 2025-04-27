@@ -4,10 +4,11 @@ from fuzzywuzzy import fuzz
 from typing import Dict, List, Tuple, Optional, Union, Any
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Milvus
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
 import os
+
 from Backend.app.core.config import MILVUS_HOST, MILVUS_PORT, MODEL_PATH
-from Backend.app.api.documents import active_documents
+from Backend.app.core.state import active_documents
 
 # Search parameters for Milvus
 search_params = {"metric_type": "L2", "params": {"ef": 100}}
@@ -31,13 +32,17 @@ def process_query(
     Args:
         user_input: User's query string
         collection_name: Name of the Milvus collection to search
-        result_range: Tuple of (start_index, end_index) to slice results
+        result_range: Tuple of (start_index, end_index) to slice results. Will return max 3 results.
         
     Returns:
         Formatted string with search results
     """
     # Connect to Milvus server
     connections.connect("default", host=MILVUS_HOST, port=MILVUS_PORT)
+
+    # Ensure result range doesn't exceed 3 results
+    start_idx, end_idx = result_range
+    end_idx = min(end_idx, start_idx + 2)  # Limit to max 3 results from start
 
     # Check if the collection exists
     try:
@@ -74,7 +79,7 @@ def process_query(
             data=query_vector,
             anns_field="vector",
             param=search_params,
-            limit=50,  # Fetch enough results to allow slicing
+            limit=10,  # Reduced from 50 since we only need max 3
             output_fields=["text"],
             consistency_level="Strong",
             expr=expr
@@ -87,12 +92,8 @@ def process_query(
     for hits in search_results:
         all_hits.extend(hits)
     
-    # Handle result slicing based on the provided range
-    if result_range:
-        start_idx, end_idx = result_range
-        sliced_hits = all_hits[start_idx:end_idx]
-    else:
-        sliced_hits = all_hits
+    # Apply the result range with 3-result limit
+    sliced_hits = all_hits[start_idx:end_idx]
 
     if not sliced_hits:
         return "No results found for the given query and filters."

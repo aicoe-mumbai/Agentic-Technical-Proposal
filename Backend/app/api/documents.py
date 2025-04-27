@@ -9,14 +9,13 @@ from Backend.app.models.models import (
     DocumentUploadResponse, ScopeExtractionResponse, 
     ScopeConfirmationRequest, QueryRequest, RangeQueryRequest
 )
-from Backend.app.utils.pdf_utils import extract_text_from_pdf, extract_scope_from_document
+from Backend.app.utils.pdf_utils import extract_text_from_pdf
 from Backend.app.utils.vector_utils import initialize_vector_db, process_query
+from Backend.app.utils.rag_agent import RAGAgent
 from Backend.app.core.config import UPLOADS_DIR
+from Backend.app.core.state import active_documents
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
-# Dict to store active document session data
-active_documents = {}
 
 def check_tesseract_installed():
     """Check if tesseract is installed and accessible"""
@@ -88,12 +87,13 @@ async def extract_document_scope(filename: str):
     if doc_id not in active_documents or active_documents[doc_id]["status"] != "processed":
         raise HTTPException(status_code=400, detail="Document processing not complete")
     
-    # Extract scope using the document's pages
-    documents = extract_text_from_pdf(file_path, None)
-    scope_data = extract_scope_from_document(documents)
+    # Initialize RAG agent for scope extraction
+    agent = RAGAgent(file_path, {})  # Empty data_dict since we don't need templates for scope
+    scope_data = agent.extract_scope()
     
-    # Update the active document with scope data
+    # Update the active document with scope data but mark as unconfirmed
     active_documents[doc_id]["scope"] = scope_data
+    active_documents[doc_id]["scope_confirmed"] = False
     
     return scope_data
 
@@ -108,18 +108,28 @@ async def confirm_document_scope(filename: str, request: ScopeConfirmationReques
     doc_id = os.path.basename(file_path)
     if doc_id not in active_documents:
         raise HTTPException(status_code=400, detail="Document has not been processed")
+        
+    if not request.page_numbers and "scope" not in active_documents[doc_id]:
+        raise HTTPException(status_code=400, detail="No scope data available to confirm")
     
-    # Extract text from user-specified pages
-    documents = extract_text_from_pdf(file_path, None)
+    if request.page_numbers:
+        # Extract text from user-specified pages
+        documents = extract_text_from_pdf(file_path, None)
+        
+        # Filter documents by user-selected pages
+        selected_documents = [doc for doc in documents if doc.metadata.get("page") in request.page_numbers]
+        
+        if not selected_documents:
+            raise HTTPException(status_code=400, detail="No valid pages selected")
+        
+        # Re-extract scope with user-confirmed pages
+        agent = RAGAgent(file_path, {})
+        scope_data = agent.extract_scope()
+    else:
+        # Use existing scope data if no pages specified (direct confirmation)
+        scope_data = active_documents[doc_id]["scope"]
     
-    # Filter documents by user-selected pages
-    selected_documents = [doc for doc in documents if doc.metadata.get("page") in request.page_numbers]
-    
-    if not selected_documents:
-        raise HTTPException(status_code=400, detail="No valid pages selected")
-    
-    # Re-extract scope with user-confirmed pages
-    scope_data = extract_scope_from_document(selected_documents)
+    # Update document state with confirmed scope
     active_documents[doc_id]["scope"] = scope_data
     active_documents[doc_id]["scope_confirmed"] = True
     

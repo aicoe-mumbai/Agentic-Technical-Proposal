@@ -4,8 +4,8 @@ from pdf2image import convert_from_path
 from langchain_core.documents import Document
 from tqdm import tqdm
 from typing import List, Optional, Union, Dict, Any
-from Backend.app.api.documents import active_documents
 import os
+from Backend.app.core.state import active_documents
 
 def clean_string(input_string: str) -> str:
     """Clean and normalize a string by removing extra whitespace"""
@@ -64,7 +64,6 @@ def extract_text_from_pdf(pdf_path: str, pages_to_scrap: Optional[str] = None) -
         
         return clean_string(plain_text)
 
-def extract_scope_from_document(documents: List[Document]) -> Dict[str, Any]:
     """
     Extract the scope section from document list
     

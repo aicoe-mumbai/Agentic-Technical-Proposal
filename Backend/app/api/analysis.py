@@ -62,21 +62,50 @@ def get_agent(document_name: str, template_name: str):
 @router.post("/generate-topics/{document_name}/{template_name}", response_model=TopicGenerationResponse)
 async def generate_topics(document_name: str, template_name: str):
     """Generate topics based on document scope and template"""
-    agent = get_agent(document_name, template_name)
-    
-    # Get scope data
-    doc_id = os.path.basename(os.path.join(UPLOADS_DIR, document_name))
-    if "scope" not in active_documents.get(doc_id, {}):
-        raise HTTPException(status_code=400, detail="Document scope has not been extracted")
-    
-    scope_data = active_documents[doc_id]["scope"]
-    
-    # Get template TOC
-    template = get_template_by_name(template_name)
-    given_toc = template.get("project_TOC", "")
-    
-    # Generate topic prompt
-    topic_prompt = f"""
+    try:
+        # Get or create agent
+        agent = get_agent(document_name, template_name)
+        
+        # Get scope data with validation
+        doc_id = os.path.basename(os.path.join(UPLOADS_DIR, document_name))
+        doc_data = active_documents.get(doc_id, {})
+        
+        if not doc_data:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Document {document_name} not found in active documents"
+            )
+            
+        if "scope" not in doc_data:
+            raise HTTPException(
+                status_code=400, 
+                detail="Document scope has not been extracted. Please extract scope first."
+            )
+        
+        scope_data = doc_data["scope"]
+        if not scope_data.get("scope_text"):
+            raise HTTPException(
+                status_code=400,
+                detail="Empty scope data. Please re-extract the document scope."
+            )
+        
+        # Get template TOC with validation
+        template = get_template_by_name(template_name)
+        if not template:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Template {template_name} not found"
+            )
+            
+        given_toc = template.get("project_TOC")
+        if not given_toc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template {template_name} has no TOC defined"
+            )
+
+        # Generate topic prompt
+        topic_prompt = f"""
 Develop a hierarchical Table of Contents (ToC) by validating the content of the uploaded Statement of Technical Requirements (SOTR) document against the provided Example ToC.
 
 Table of Contents (ToC):
@@ -120,19 +149,22 @@ Sample Output:
 3) Annotations..
 """
 
-    # Send to agent
-    result = agent.analyze_query(topic_prompt)
+        # Send to agent
+        result = agent.analyze_query(topic_prompt)
+        
+        # Process the result to extract topics
+        raw_response = result.get("output", "")
+        
+        # Parse the raw response to extract structured topics
+        topics = parse_topics_from_response(raw_response)
+        
+        return {
+            "topics": topics,
+            "raw_response": raw_response
+        }
     
-    # Process the result to extract topics
-    raw_response = result.get("output", "")
-    
-    # Parse the raw response to extract structured topics
-    topics = parse_topics_from_response(raw_response)
-    
-    return {
-        "topics": topics,
-        "raw_response": raw_response
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/generate-content/{document_name}/{template_name}", response_model=ContentGenerationResponse)
 async def generate_content(
@@ -283,4 +315,4 @@ def parse_topics_from_response(raw_response: str) -> List[Dict[str, Any]]:
         
         topics.append(topic_info)
     
-    return topics 
+    return topics

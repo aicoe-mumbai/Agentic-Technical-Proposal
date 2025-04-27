@@ -4,15 +4,7 @@ from typing import Dict, Any, Optional, List
 from Frontend.app.utils.api import api_client
 
 def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Render the scope extraction and confirmation section
-    
-    Args:
-        document_info: Dictionary with document information
-        
-    Returns:
-        Dictionary with scope information if successful, None otherwise
-    """
+    """Render the scope extraction and confirmation section"""
     st.header("Extract Document Scope")
     
     filename = document_info.get("filename")
@@ -24,6 +16,9 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
     if "scope_data" not in st.session_state:
         st.session_state.scope_data = None
     
+    if "scope_confirmed" not in st.session_state:
+        st.session_state.scope_confirmed = False
+    
     if st.button("Extract Scope"):
         with st.spinner("Extracting scope from document..."):
             scope_data = api_client.extract_document_scope(filename)
@@ -33,6 +28,7 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
                 st.success("Scope extracted successfully!")
             else:
                 st.warning("Could not find a clear scope section. Please select pages manually.")
+                st.session_state.manual_scope_selection = True
     
     # Display scope data if available
     if st.session_state.scope_data:
@@ -45,14 +41,24 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
         if scope_text:
             st.text_area("Scope Text", value=scope_text, height=300, disabled=True)
             
-            # Allow user to confirm or reject the scope
-            if st.button("Confirm Scope"):
-                st.success("Scope confirmed!")
+            if not st.session_state.scope_confirmed:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Confirm Scope"):
+                        result = api_client.confirm_document_scope(filename, scope_data.get('source_pages', []))
+                        if "scope" in result:
+                            st.session_state.scope_confirmed = True
+                            st.success("Scope confirmed!")
+                            return result["scope"]
+                
+                with col2:
+                    if st.button("Reject and Select Pages Manually"):
+                        st.session_state.scope_data = None
+                        st.session_state.manual_scope_selection = True
+                        st.session_state.scope_confirmed = False
+            else:
+                st.success("✓ Scope has been confirmed")
                 return scope_data
-            
-            if st.button("Reject and Select Pages Manually"):
-                st.session_state.scope_data = None
-                st.session_state.manual_scope_selection = True
         else:
             st.warning("No scope text was extracted.")
             st.session_state.manual_scope_selection = True
@@ -100,9 +106,10 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
                         if "scope" in result:
                             st.session_state.scope_data = result["scope"]
                             st.session_state.manual_scope_selection = False
+                            st.session_state.scope_confirmed = True
                             st.success("Scope confirmed!")
                             return result["scope"]
                         else:
                             st.error(f"Error confirming scope: {result.get('message', 'Unknown error')}")
     
-    return st.session_state.get("scope_data") 
+    return st.session_state.scope_data if st.session_state.scope_confirmed else None
