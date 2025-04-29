@@ -118,6 +118,32 @@ class ApiClient:
             st.error(f"Error generating topics: {str(e)}")
             return {"topics": [], "raw_response": str(e)}
     
+    def get_document_topics(self, document_name: str, template_name: str) -> Dict[str, Any]:
+        """Get previously generated topics for a document and template"""
+        try:
+            response = requests.get(
+                self._get_url(f"/documents/{document_name}/topics/{template_name}")
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error retrieving document topics: {str(e)}")
+            return {"topics": []}
+    
+    def save_document_topics(self, document_name: str, template_name: str, topics: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Save generated topics for a document and template"""
+        try:
+            data = {"topics": topics}
+            response = requests.post(
+                self._get_url(f"/documents/{document_name}/topics/{template_name}"),
+                json=data
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error saving document topics: {str(e)}")
+            return {"success": False, "message": str(e)}
+    
     def generate_content(self, document_name: str, template_name: str, topic: str) -> Dict[str, Any]:
         """Generate content for a topic"""
         try:

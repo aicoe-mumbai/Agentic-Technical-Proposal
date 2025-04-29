@@ -2,12 +2,13 @@ import logging
 from langchain.agents import initialize_agent
 from langchain.tools import Tool, StructuredTool
 from typing import Dict, List, Any, Optional, Tuple
-# from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.llms import HuggingFaceEndpoint
+from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain.llms import HuggingFaceEndpoint
 from langchain.callbacks import StdOutCallbackHandler
 from Backend.app.core.config import LLM_ENDPOINT
 from Backend.app.utils.vector_utils import process_query
 from Backend.app.utils.pdf_utils import extract_text_from_pdf
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,13 +20,13 @@ class RAGAgent:
     def __init__(self, pdf_path: str, data_dict: Dict[str, str]):
         self.pdf_path = pdf_path
         self.data_dict = data_dict
-        # self.llm = ChatGoogleGenerativeAI(
-        #     model="gemini-2.0-flash-001",
-        #     temperature=0,
-        #     convert_system_message_to_human=True,
-        #     api_key="AIzaSyD63fdWAO6j5ByW7Wajq3uEZ6TEA9L0ic4"
-        # )
-        self.llm = HuggingFaceEndpoint(endpoint_url = endpoint)
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-001",
+            temperature=0,
+            convert_system_message_to_human=True,
+            api_key="AIzaSyD63fdWAO6j5ByW7Wajq3uEZ6TEA9L0ic4"
+        )
+        # self.llm = HuggingFaceEndpoint(endpoint_url = endpoint)
         self.agent = None
         self.callbacks = [StdOutCallbackHandler()]
         logger.info(f"Initializing RAG agent for {pdf_path}")
@@ -94,15 +95,13 @@ class RAGAgent:
             1. Core Scope Identification:
             - Find sections labeled as 'Scope', 'Project Scope', 'Scope of Work', or similar
             - Include any referenced sections, paragraphs, or appendices mentioned within the scope
-            - Follow and analyze any cross-references to other sections for complete understanding
 
             2. Detailed Scope Elements:
             a) Project Inclusions:
                 - List all deliverables with their specified quantities
                 - Identify any hardware, software, or system components
                 - Note any specific versions, models, or specifications mentioned
-                - For any referenced section numbers or paragraphs, USE THE PDFPageExtractorTool to extract and include that content
-
+                
             b) Project Timeline and Milestones:
                 - Extract any dates, durations, or deadlines
                 - Note project phases or stage-wise deliverables
@@ -127,9 +126,7 @@ class RAGAgent:
             - Related specifications or requirements
             - Any clarifications or additional context provided
             - Important notes or caveats mentioned
-            - When encountering references like "refer to section X" or "as per paragraph Y", 
-                use the MilvusSimilaritySearchTool to locate the page and context, and if needed use PDFPageExtractorTool to fetch and incorporate that content
-
+            
             4. Quantitative Information:
             - Numbers of units/components required
             - Performance metrics or targets
@@ -166,7 +163,10 @@ class RAGAgent:
             When you see phrases like "refer to", "as per", "as defined in", "according to section",
             make sure to fetch and analyze those referenced sections to provide complete information.
 
-            Remember to validate that all requirements are properly captured, and no critical information is missed.
+            Remember to validate that all requirements are properly captured, and no critical information is missed. Deliver only the final result to user.
+            Strictly adhere to the output format
+            Page: []
+            Scope Retrieved:[]
             """
 
         try:
@@ -199,3 +199,14 @@ class RAGAgent:
                 "source_pages": [],
                 "is_complete": False
             }
+
+    
+    def request_invoker(self, topic_prompt) -> Dict[str, Any]:
+        """Generate topics using the agent"""
+        logger.info("Starting topic generation")
+         
+        result = self.agent.invoke({"input": topic_prompt})
+        output = result.get("output", "")
+        logger.info(f"Agent completed with output length: {len(output)}")
+        return output
+            

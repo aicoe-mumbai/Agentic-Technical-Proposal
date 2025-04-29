@@ -76,10 +76,16 @@ def render_left_sidebar() -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     # Fetch all templates
     project_data = api_client.get_templates()
     
+    # Fix: Check if project_data is empty and handle appropriately
+    if not project_data:
+        st.sidebar.warning("No project templates available. Please create a new project first.")
+        return None, {}
+    
+    # Only show selectbox if there are projects available
     selected_project_name = st.sidebar.selectbox(
         "Select Project Template", 
         options=list(project_data.keys()),
-        index=0 if project_data else None,
+        index=0,
         key="project_selector"
     )
     

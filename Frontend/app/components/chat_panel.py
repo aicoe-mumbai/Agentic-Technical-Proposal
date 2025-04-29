@@ -11,6 +11,19 @@ def render_chat_panel(document_info: Dict[str, Any], template_name: str):
         document_info: Dictionary with document information
         template_name: Name of the selected template
     """
+    # Add custom CSS for chat messages
+    st.markdown("""
+        <style>
+        .chat-message {
+            color: black !important;
+            margin: 5px 0;
+        }
+        .user-message strong, .agent-message strong {
+            color: black !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.sidebar.header("Chat with Document")
     
     filename = document_info.get("filename") if document_info else None
@@ -70,4 +83,4 @@ def render_chat_panel(document_info: Dict[str, Any], template_name: str):
     # Add a clear button for chat history
     if st.session_state.chat_history and st.sidebar.button("Clear Chat History"):
         st.session_state.chat_history = []
-        st.experimental_rerun() 
+        st.experimental_rerun()

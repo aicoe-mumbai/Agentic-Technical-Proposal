@@ -13,22 +13,47 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
         st.error("No document selected")
         return None
     
+    # Initialize session state variables if they don't exist
     if "scope_data" not in st.session_state:
         st.session_state.scope_data = None
     
     if "scope_confirmed" not in st.session_state:
         st.session_state.scope_confirmed = False
     
-    if st.button("Extract Scope"):
-        with st.spinner("Extracting scope from document..."):
-            scope_data = api_client.extract_document_scope(filename)
-            
-            if scope_data.get("is_complete"):
-                st.session_state.scope_data = scope_data
-                st.success("Scope extracted successfully!")
+    if "manual_scope_selection" not in st.session_state:
+        st.session_state.manual_scope_selection = False
+    
+    # Check for previously extracted scope if not already in session state
+    if not st.session_state.scope_data:
+        existing_scope = api_client.extract_document_scope(filename)
+        if existing_scope and existing_scope.get("is_complete", False):
+            st.session_state.scope_data = existing_scope
+            if existing_scope.get("is_confirmed", False):
+                st.session_state.scope_confirmed = True
+                st.info("Previously confirmed scope retrieved from database.")
+    
+    # If scope is not yet confirmed, show the extract button
+    if not st.session_state.scope_confirmed:
+        extract_col, status_col = st.columns([1, 3])
+        with extract_col:
+            extract_clicked = st.button("Extract Scope")
+        
+        with status_col:
+            if st.session_state.scope_data:
+                st.info("Scope extracted but not yet confirmed.")
             else:
-                st.warning("Could not find a clear scope section. Please select pages manually.")
-                st.session_state.manual_scope_selection = True
+                st.info("Click to extract scope from document.")
+        
+        if extract_clicked:
+            with st.spinner("Extracting scope from document..."):
+                scope_data = api_client.extract_document_scope(filename)
+                
+                if scope_data.get("is_complete"):
+                    st.session_state.scope_data = scope_data
+                    st.success("Scope extracted successfully!")
+                else:
+                    st.warning("Could not find a clear scope section. Please select pages manually.")
+                    st.session_state.manual_scope_selection = True
     
     # Display scope data if available
     if st.session_state.scope_data:

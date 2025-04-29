@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import Dict, List, Optional, Any
 import os
 import re
-
+import logging
 from Backend.app.models.models import (
     TopicGenerationResponse, ContentGenerationRequest, 
     ContentGenerationResponse, ChatRequest, ChatResponse
@@ -11,160 +11,113 @@ from Backend.app.utils.rag_agent import RAGAgent
 from Backend.app.db.database import get_template_by_name
 from Backend.app.core.config import UPLOADS_DIR
 from Backend.app.api.documents import active_documents
+import openpyxl
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Store active RAG agents
-active_agents = {}
-
-def get_agent(document_name: str, template_name: str):
-    """Get or create a RAG agent for a document and template"""
-    doc_path = os.path.join(UPLOADS_DIR, document_name)
-    
-    if not os.path.exists(doc_path):
-        raise HTTPException(status_code=404, detail=f"Document {document_name} not found")
-    
-    doc_id = os.path.basename(doc_path)
-    if doc_id not in active_documents or active_documents[doc_id]["status"] != "processed":
-        raise HTTPException(status_code=400, detail="Document has not been processed")
-    
-    # Get template data
+def get_template_data_dict(template_name: str) -> dict:
+    """Load template file and return a key-value dictionary from its first two columns."""
     template = get_template_by_name(template_name)
     if not template:
-        raise HTTPException(status_code=404, detail=f"Template {template_name} not found")
-    
-    # Get template data dictionary
+        raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
+
     file_path = template.get("file_path")
     if not file_path or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"Template file not found")
+        raise HTTPException(status_code=404, detail=f"Template file for '{template_name}' not found")
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        ws = wb.active
+        data_dict = {}
+        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+            key, value = row
+            if key is not None and value is not None:
+                data_dict[key] = value
+        return data_dict
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading template data: {e}")
     
-    # Check if agent exists, create if not
-    agent_key = f"{doc_id}_{template_name}"
-    if agent_key not in active_agents:
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(file_path)
-            ws = wb['Sheet1']
-            data_dict = {}
-            for i in range(2, ws.max_row + 1):
-                key = ws.cell(i, 1).value
-                value = ws.cell(i, 2).value
-                if key is not None and value is not None:
-                    data_dict[key] = value
-                    
-            # Create agent
-            active_agents[agent_key] = RAGAgent(doc_path, data_dict)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error creating RAG agent: {str(e)}")
-    
-    return active_agents[agent_key]
 
 @router.post("/generate-topics/{document_name}/{template_name}", response_model=TopicGenerationResponse)
 async def generate_topics(document_name: str, template_name: str):
-    """Generate topics based on document scope and template"""
+    """Ensure document processed, initialize agent, and generate topics based on scope and template."""
+    # Validate document
+    doc_path = os.path.join(UPLOADS_DIR, document_name)
+    if not os.path.exists(doc_path):
+        raise HTTPException(status_code=404, detail=f"Document '{document_name}' not found")
+
+    doc_id = os.path.basename(doc_path)
+    doc_data = active_documents.get(doc_id)
+    if not doc_data or doc_data.get("status") != "processed":
+        raise HTTPException(status_code=400, detail="Document has not been processed or is missing")
+
+    # Validate and load template data
+    data_dict = get_template_data_dict(template_name)
+
+    agent = RAGAgent(doc_path, data_dict)
+
+    scope_info = doc_data.get("scope")
+    if not scope_info or not scope_info.get("scope_text"):
+        raise HTTPException(status_code=400, detail="Document scope missing or empty. Please extract scope first.")
+
+    # Load template TOC
+    template = get_template_by_name(template_name)
+    toc = template.get("project_TOC") if template else None
+    if not toc:
+        raise HTTPException(status_code=400, detail=f"Template '{template_name}' has no ToC defined")
+    print(toc)
+    # Build prompt
+    prompt = f"""
+        Develop a hierarchical Table of Contents (ToC) by validating the content of the uploaded Statement of Technical Requirements (SOTR) document against the provided Example ToC.
+
+        Table of Contents (ToC):
+        {toc}
+
+        ### Scope Information:
+        {scope_info['scope_text']}
+        (Found on pages: {', '.join(map(str, scope_info.get('source_pages', [])))})
+
+        ### Instructions:
+        1. For each item in the ToC:
+        - Search for the exact term, related technical terms, and component/subsystem terms using MilvusSimilaritySearchTool.
+        - Document evidence found or indicate absence.
+        - Never assume presence without tool verification.
+        2. Decision Criteria:
+        - Keep items with clear evidence.
+        - Mark items for removal if evidence is missing.
+        - Highlight new additions found in the SOTR.
+        3. Required Output:
+        Provide the updated ToC as plain text (preserving hierarchy) and annotate items needing removal with [REMOVE] and new additions with [ADD]. Include page numbers where evidence is found.
+        4. Process:
+        - Process every item.
+        - Skip common sections (e.g., Preamble, Introduction, Scope, Delivery) without search.
+        - Show search attempts for each item.
+
+        Your output must strictly follow the format:
+        **Updated TOC**
+        1. Preamble
+        2. Introduction
+        3. IPMS (page 7)
+        3.1 Propulsion system (page 8)
+        3.2 Alarm system [REMOVE]
+        ...
+        **Additional Considerations**
+        1) Evidences
+        2) Why topics removed
+        3) Annotations
+        """
+    print(prompt)
+    # Generate topics
     try:
-        # Get or create agent
-        agent = get_agent(document_name, template_name)
-        
-        # Get scope data with validation
-        doc_id = os.path.basename(os.path.join(UPLOADS_DIR, document_name))
-        doc_data = active_documents.get(doc_id, {})
-        
-        if not doc_data:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Document {document_name} not found in active documents"
-            )
-            
-        if "scope" not in doc_data:
-            raise HTTPException(
-                status_code=400, 
-                detail="Document scope has not been extracted. Please extract scope first."
-            )
-        
-        scope_data = doc_data["scope"]
-        if not scope_data.get("scope_text"):
-            raise HTTPException(
-                status_code=400,
-                detail="Empty scope data. Please re-extract the document scope."
-            )
-        
-        # Get template TOC with validation
-        template = get_template_by_name(template_name)
-        if not template:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Template {template_name} not found"
-            )
-            
-        given_toc = template.get("project_TOC")
-        if not given_toc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Template {template_name} has no TOC defined"
-            )
-
-        # Generate topic prompt
-        topic_prompt = f"""
-Develop a hierarchical Table of Contents (ToC) by validating the content of the uploaded Statement of Technical Requirements (SOTR) document against the provided Example ToC.
-
-Table of Contents (ToC):
-{given_toc}
-
-### Scope Information:
-{scope_data.get('scope_text', 'No scope available')}
-(Found on pages: {', '.join(map(str, scope_data.get('source_pages', [])))})
-
-### Instructions:
-1. For each item in the ToC:
-   - Search for the exact term, related technical terms, and component/subsystem terms using MilvusSimilaritySearchTool.
-   - Document evidence found or indicate absence.
-   - Never assume the presence of topic unless it is itertaed to check with the tool.
-2. Decision Criteria:
-   - Keep items with clear evidence.
-   - Mark items for removal if evidence is missing.
-   - Highlight any new additions found in the SOTR.
-3. Required Output:
-   Provide the updated ToC as plain text (preserving the hierarchy) and annotate items needing removal with [REMOVE] and new additions with [ADD]. Include page numbers where evidence is found.
-4. Process:
-   - Process every item.
-   - Skip common sections (e.g., Preamble, Introduction, Scope, Delivery) without search.
-   - Show search attempts for each item.
-   - Skip searching for items having keep as like in the TOC.
-
-### Important:
-Perform exact search over the topics word to word search and it should be available in the exact page you refer.
-Your output should strictly adhere to the following output format:
-Sample Output:
-**Updated TOC**
-1. Preamble
-2. Introduction
-3. IPMS (page 7)
-    3.1 Propulsion system (page 8)
-    3.2 Alarm system [Remove]
-    ...
-**Additional Considerations**
-1) Evidences
-2) Why some topics removed
-3) Annotations..
-"""
-
-        # Send to agent
-        result = agent.analyze_query(topic_prompt)
-        
-        # Process the result to extract topics
-        raw_response = result.get("output", "")
-        
-        # Parse the raw response to extract structured topics
-        topics = parse_topics_from_response(raw_response)
-        
-        return {
-            "topics": topics,
-            "raw_response": raw_response
-        }
-    
+        raw_output = agent.request_invoker({"input": prompt})
+        if not raw_output:
+            raise ValueError("Empty response from agent")
+        topics = parse_topics_from_response(raw_output)
+        return {"topics": topics, "raw_response": raw_output}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error generating topics: {e}")
 
 @router.post("/generate-content/{document_name}/{template_name}", response_model=ContentGenerationResponse)
 async def generate_content(
@@ -173,48 +126,91 @@ async def generate_content(
     request: ContentGenerationRequest
 ):
     """Generate content for a specific topic"""
-    agent = get_agent(document_name, template_name)
-    
-    # Get scope data
-    doc_id = os.path.basename(os.path.join(UPLOADS_DIR, document_name))
-    if "scope" not in active_documents.get(doc_id, {}):
-        raise HTTPException(status_code=400, detail="Document scope has not been extracted")
-    
-    scope_data = active_documents[doc_id]["scope"]
-    
-    # Content generation prompt
-    content_prompt = """
-You are an advanced AI assistant supporting a skilled engineering team in drafting high-level technical proposal content.
-Use the previously generated content from the ContentGenerationTemplateTool as a baseline.
-Your task is to update only the key parameters, data points, and specifications based on the current Statement of Technical Requirements (SOTR), while retaining the overall structure and flow.
+    try:
+        logger.info(f"Starting content generation for document: {document_name}, template: {template_name}, topic: {request.topic}")
+        data_dict = get_template_data_dict(template_name)
+        # Get or create agent with proper error handling
+        try:
+            agent = RAGAgent(document_name, data_dict)
+        except Exception as e:
+            logger.error(f"Error creating agent: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error initializing agent: {str(e)}")
+        
+        # Get scope data with validation
+        doc_id = os.path.basename(os.path.join(UPLOADS_DIR, document_name))
+        if doc_id not in active_documents:
+            logger.error(f"Document {document_name} not found in active documents")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Document {document_name} not found in active documents"
+            )
+            
+        if "scope" not in active_documents[doc_id]:
+            logger.error(f"No scope data found for document {document_name}")
+            raise HTTPException(
+                status_code=400, 
+                detail="Document scope has not been extracted"
+            )
+        
+        scope_data = active_documents[doc_id]["scope"]
+        
+        # Content generation prompt
+        content_prompt = """
+        You are an advanced AI assistant supporting a skilled engineering team in drafting high-level technical proposal content.
+        Use the previously generated content from the ContentGenerationTemplateTool as a baseline.
+        Your task is to update only the key parameters, data points, and specifications based on the current Statement of Technical Requirements (SOTR), while retaining the overall structure and flow.
 
-Workflow:
-1. Retrieve the existing content from ContentGenerationTemplateTool.
-2. Identify key parameters needing update (e.g., quantities, technical specifications, metrics).
-3. Extract updated details from the current SOTR using MilvusSimilaritySearchTool or PDFTextExtractorTool.
-4. Revise the content by incorporating the updates, ensuring consistency and clarity.
+        Workflow:
+        1. Retrieve the existing content from ContentGenerationTemplateTool.
+        2. Identify key parameters needing update (e.g., quantities, technical specifications, metrics).
+        3. Extract updated details from the current SOTR using MilvusSimilaritySearchTool or PDFTextExtractorTool.
+        4. Revise the content by incorporating the updates, ensuring consistency and clarity.
 
-Guidelines:
-- Retain the original content structure, modifying only necessary details.
-- For each update, provide a brief explanation.
-- Present the updated content as clean, plain text (no HTML styling).
-- Generate detailed content that accurately reflects the requirements in the SOTR.
-"""
+        Guidelines:
+        - Retain the original content structure, modifying only necessary details.
+        - For each update, provide a brief explanation.
+        - Present the updated content as clean, plain text (no HTML styling).
+        - Generate detailed content that accurately reflects the requirements in the SOTR.
+        - Validate all extracted information with exact page references.
+        - For any technical specifications, include units and tolerances if specified.
+        """
 
-    # User input for the agent
-    user_input = f"User Selected Topic: {request.topic}"
+        # User input for the agent
+        user_input = f"""
+        User Selected Topic: {request.topic}
+        
+        Scope Context:
+        {scope_data.get('scope_text', 'No scope available')}
+        (Found on pages: {', '.join(map(str, scope_data.get('source_pages', [])))})
+        """
+        
+        # Create the combined prompt
+        combined_prompt = f"{content_prompt}\n\n{user_input}"
+        
+        logger.info("Sending content prompt to agent")
+        try:
+            # Send to agent
+            result = agent.analyze_query({"input": combined_prompt})
+            content = result.get("output", "")
+            
+            if not content:
+                raise ValueError("Empty response from agent")
+                
+            logger.info(f"Successfully generated content for topic: {request.topic}")
+            return {
+                "content": content,
+                "topic": request.topic
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in agent processing: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error generating content: {str(e)}")
     
-    # Create the combined prompt
-    combined_prompt = f"{content_prompt}\n\n{user_input}"
-    
-    # Send to agent
-    result = agent.analyze_query(combined_prompt)
-    content = result.get("output", "")
-    
-    return {
-        "content": content,
-        "topic": request.topic
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in content generation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/chat/{document_name}/{template_name}", response_model=ChatResponse)
 async def chat_with_document(
@@ -223,7 +219,8 @@ async def chat_with_document(
     request: ChatRequest
 ):
     """Chat with the document using the RAG agent"""
-    agent = get_agent(document_name, template_name)
+    data_dict = get_template_data_dict(template_name)
+    agent = RAGAgent(document_name, data_dict)
     
     # Prepare chat prompt
     chat_prompt = """
@@ -256,12 +253,11 @@ Always prioritize technical accuracy, using precise terminology from the documen
     combined_prompt = f"{chat_prompt}\n\n{conversation}"
     
     # Send to agent
-    result = agent.analyze_query(combined_prompt)
-    response = result.get("output", "")
+    response = agent.request_invoker(combined_prompt)
     
     return {
         "response": response,
-        "status": result.get("status", "success")
+        "status": "success"
     }
 
 def parse_topics_from_response(raw_response: str) -> List[Dict[str, Any]]:

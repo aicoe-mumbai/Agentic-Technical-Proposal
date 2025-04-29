@@ -44,8 +44,14 @@ def initialize_app_state():
     if "scope_data" not in st.session_state:
         st.session_state.scope_data = None
     
+    if "scope_confirmed" not in st.session_state:
+        st.session_state.scope_confirmed = False
+    
     if "topics_data" not in st.session_state:
         st.session_state.topics_data = None
+    
+    if "topics_finalized" not in st.session_state:
+        st.session_state.topics_finalized = False
     
     if "finalized_topics" not in st.session_state:
         st.session_state.finalized_topics = None
@@ -78,25 +84,40 @@ def main():
         if document_info:
             st.session_state.document_info = document_info
             
+            # Set app stage to scope extraction if needed
+            if document_info.get("status") == "processed" and st.session_state.app_stage == "upload":
+                st.session_state.app_stage = "scope"
+            
             # Render scope extraction if document is processed
             if document_info.get("status") == "processed":
                 scope_data = render_scope_extraction(document_info)
                 
-                # If scope is extracted, proceed to topics generation
+                # Update scope data in session state
                 if scope_data:
                     st.session_state.scope_data = scope_data
+                    st.session_state.scope_confirmed = True
+                    
+                    # Set app stage to topics generation if needed
+                    if st.session_state.app_stage == "scope":
+                        st.session_state.app_stage = "topics"
                     
                     # Only proceed if a project template is selected
-                    if selected_project_name:
+                    if selected_project_name and st.session_state.app_stage in ["topics", "content"]:
                         # Render topics generation
                         topics = render_topics_generation(document_info, selected_project_name)
                         
-                        # If topics are finalized, proceed to content editor
+                        # If topics are finalized, update session state and proceed to content editor
                         if topics:
                             st.session_state.finalized_topics = topics
+                            st.session_state.topics_finalized = True
+                            
+                            # Set app stage to content generation if needed
+                            if st.session_state.app_stage == "topics":
+                                st.session_state.app_stage = "content"
                             
                             # Render content editor
-                            render_content_editor(document_info, selected_project_name, topics)
+                            if st.session_state.app_stage == "content":
+                                render_content_editor(document_info, selected_project_name, topics)
     
     # Render chat panel in right sidebar
     # Use the right sidebar only if a document is loaded

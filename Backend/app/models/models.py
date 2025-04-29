@@ -49,6 +49,20 @@ class ScopeConfirmationRequest(BaseModel):
     """Request model for scope confirmation"""
     page_numbers: List[int]
 
+class Topic(BaseModel):
+    """Model for a single topic"""
+    number: Optional[str] = None
+    text: str
+    level: int = 0
+    status: str = "keep"
+    page: Optional[int] = None
+    id: Optional[int] = None
+    is_confirmed: bool = False
+
+class TopicListRequest(BaseModel):
+    """Request model for saving topics"""
+    topics: List[Dict[str, Any]]
+
 class TopicGenerationResponse(BaseModel):
     """Response model for topic generation"""
     topics: List[Dict[str, Any]]

@@ -16,6 +16,33 @@ def render_document_upload() -> Optional[Dict[str, Any]]:
     uploaded_pdf = st.file_uploader("Upload the SOTR PDF file", type=["pdf"])
     
     if uploaded_pdf is not None:
+        # Check if this document has already been processed
+        filename = uploaded_pdf.name
+        status_result = api_client.check_document_status(filename)
+        
+        # Document exists and is already processed
+        if status_result.get("status") == "processed":
+            st.success(f"Document '{filename}' was previously processed!")
+            
+            # Restore document info to session state
+            document_info = {
+                "filename": filename,
+                "status": "processed",
+                "pages": status_result.get("pages", 0)
+            }
+            st.session_state.document_info = document_info
+            
+            # Check for previously extracted scope
+            scope_result = api_client.extract_document_scope(filename)
+            if scope_result and scope_result.get("is_complete", False):
+                st.session_state.scope_data = scope_result
+                if scope_result.get("is_confirmed", False):
+                    st.session_state.scope_confirmed = True
+                    st.success("Previously extracted scope retrieved!")
+            
+            return document_info
+            
+        # Document needs processing
         if st.button("Process Document"):
             with st.spinner("Uploading document..."):
                 result = api_client.upload_document(uploaded_pdf)

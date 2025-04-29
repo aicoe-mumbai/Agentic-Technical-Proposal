@@ -27,18 +27,47 @@ def render_topics_generation(document_info: Dict[str, Any], template_name: str) 
         st.error("No template selected")
         return None
     
+    # Initialize or retrieve session state for topics
     if "topics_data" not in st.session_state:
         st.session_state.topics_data = None
+        
+    if "topics_finalized" not in st.session_state:
+        st.session_state.topics_finalized = False
     
-    if st.button("Generate Topics"):
-        with st.spinner("Generating topics based on document scope and template..."):
-            result = api_client.generate_topics(filename, template_name)
-            
-            if "topics" in result and result["topics"]:
-                st.session_state.topics_data = result
-                st.success("Topics generated successfully!")
+    # Check for previously generated topics
+    if not st.session_state.topics_data:
+        # Try to retrieve already generated topics from the API
+        try:
+            previous_topics = api_client.get_document_topics(filename, template_name)
+            if previous_topics and "topics" in previous_topics and previous_topics["topics"]:
+                st.session_state.topics_data = previous_topics
+                st.session_state.topics_finalized = True
+                st.info("Previously generated topics retrieved from database.")
+        except Exception as e:
+            # If the API endpoint doesn't exist yet, this will fail silently
+            pass
+    
+    # Show generate button if topics aren't finalized
+    if not st.session_state.topics_finalized:
+        generate_col, status_col = st.columns([1, 3])
+        with generate_col:
+            generate_clicked = st.button("Generate Topics")
+        
+        with status_col:
+            if st.session_state.topics_data:
+                st.info("Topics generated but not yet finalized.")
             else:
-                st.error("Failed to generate topics. Please check if the document scope and template are valid.")
+                st.info("Click to generate topics based on document scope and template.")
+        
+        if generate_clicked:
+            with st.spinner("Generating topics based on document scope and template..."):
+                result = api_client.generate_topics(filename, template_name)
+                
+                if "topics" in result and result["topics"]:
+                    st.session_state.topics_data = result
+                    st.success("Topics generated successfully!")
+                else:
+                    st.error("Failed to generate topics. Please check if the document scope and template are valid.")
     
     # Display topics if available
     if st.session_state.topics_data:
@@ -114,11 +143,24 @@ def render_topics_generation(document_info: Dict[str, Any], template_name: str) 
                     else:
                         st.write(raw_response)
         
-        # Allow the user to finalize the topics
-        if st.button("Finalize Topics"):
-            # Store the finalized topics in session state
-            st.session_state.finalized_topics = topics
-            st.success("Topics finalized! You can now proceed to content generation.")
-            return topics
+        # Allow the user to finalize the topics if not already finalized
+        if not st.session_state.topics_finalized:
+            if st.button("Finalize Topics"):
+                # Save topics to the database
+                try:
+                    # This requires adding a new API endpoint to save topics
+                    api_client.save_document_topics(filename, template_name, topics)
+                except Exception as e:
+                    # If the API endpoint doesn't exist yet, this will fail silently
+                    pass
+                
+                # Store the finalized topics in session state
+                st.session_state.finalized_topics = topics
+                st.session_state.topics_finalized = True
+                st.success("Topics finalized! You can now proceed to content generation.")
+        else:
+            st.success("✓ Topics have been finalized")
+        
+        return topics if st.session_state.topics_finalized else None
     
     return st.session_state.get("finalized_topics") 
