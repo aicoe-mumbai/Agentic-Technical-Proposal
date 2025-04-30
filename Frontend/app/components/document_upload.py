@@ -28,7 +28,8 @@ def render_document_upload() -> Optional[Dict[str, Any]]:
             document_info = {
                 "filename": filename,
                 "status": "processed",
-                "pages": status_result.get("pages", 0)
+                "pages": status_result.get("pages", 0),
+                "previously_processed": True  # Flag to indicate this is a previously processed document
             }
             st.session_state.document_info = document_info
             
@@ -39,6 +40,11 @@ def render_document_upload() -> Optional[Dict[str, Any]]:
                 if scope_result.get("is_confirmed", False):
                     st.session_state.scope_confirmed = True
                     st.success("Previously extracted scope retrieved!")
+                    
+                    # Add a button to skip directly to topics generation
+                    if st.button("Continue to Topics"):
+                        st.session_state.skip_to_topics = True
+                        st.experimental_rerun()
             
             return document_info
             
@@ -95,7 +101,8 @@ def render_document_upload() -> Optional[Dict[str, Any]]:
                             st.session_state.document_info = {
                                 "filename": filename,
                                 "status": "processed",
-                                "pages": status_result.get("pages", 0)
+                                "pages": status_result.get("pages", 0),
+                                "previously_processed": False
                             }
                             
                             return st.session_state.document_info

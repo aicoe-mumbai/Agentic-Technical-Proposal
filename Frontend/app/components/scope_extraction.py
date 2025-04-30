@@ -23,14 +23,29 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
     if "manual_scope_selection" not in st.session_state:
         st.session_state.manual_scope_selection = False
     
+    # Check if we're working with a previously processed document
+    previously_processed = document_info.get("previously_processed", False)
+    
     # Check for previously extracted scope if not already in session state
-    if not st.session_state.scope_data:
-        existing_scope = api_client.extract_document_scope(filename)
-        if existing_scope and existing_scope.get("is_complete", False):
-            st.session_state.scope_data = existing_scope
-            if existing_scope.get("is_confirmed", False):
-                st.session_state.scope_confirmed = True
-                st.info("Previously confirmed scope retrieved from database.")
+    if not st.session_state.scope_data or not st.session_state.scope_confirmed:
+        with st.spinner("Retrieving previously extracted scope..."):
+            existing_scope = api_client.extract_document_scope(filename)
+            if existing_scope and existing_scope.get("is_complete", False):
+                st.session_state.scope_data = existing_scope
+                if existing_scope.get("is_confirmed", False):
+                    st.session_state.scope_confirmed = True
+                    st.info("Previously confirmed scope retrieved from database.")
+    
+    # Add a force-extract button for re-extracting scope even if confirmed
+    if st.session_state.scope_confirmed:
+        if st.button("Re-extract Scope"):
+            st.session_state.scope_confirmed = False
+            st.session_state.scope_data = None
+            st.session_state.manual_scope_selection = False
+            # Reset skip_to_topics to ensure we go through the proper flow
+            if "skip_to_topics" in st.session_state:
+                st.session_state.skip_to_topics = False
+            st.experimental_rerun()
     
     # If scope is not yet confirmed, show the extract button
     if not st.session_state.scope_confirmed:
@@ -46,7 +61,8 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
         
         if extract_clicked:
             with st.spinner("Extracting scope from document..."):
-                scope_data = api_client.extract_document_scope(filename)
+                # Set cache=False to force a fresh extraction
+                scope_data = api_client.extract_document_scope(filename, cache=False)
                 
                 if scope_data.get("is_complete"):
                     st.session_state.scope_data = scope_data
@@ -67,13 +83,19 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
             st.text_area("Scope Text", value=scope_text, height=300, disabled=True)
             
             if not st.session_state.scope_confirmed:
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     if st.button("Confirm Scope"):
                         result = api_client.confirm_document_scope(filename, scope_data.get('source_pages', []))
                         if "scope" in result:
+                            st.session_state.scope_data = result["scope"]
                             st.session_state.scope_confirmed = True
                             st.success("Scope confirmed!")
+                            if previously_processed:
+                                # Add button to continue to topics if this is a previously processed document
+                                if st.button("Continue to Topics"):
+                                    st.session_state.skip_to_topics = True
+                            st.experimental_rerun()  # Rerun to update UI with confirmed status
                             return result["scope"]
                 
                 with col2:
@@ -81,8 +103,20 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
                         st.session_state.scope_data = None
                         st.session_state.manual_scope_selection = True
                         st.session_state.scope_confirmed = False
+                        st.experimental_rerun()  # Rerun to show manual selection UI
+                        
+                if previously_processed and col3.button("Skip to Topics"):
+                    st.session_state.scope_confirmed = True
+                    st.session_state.skip_to_topics = True
+                    st.experimental_rerun()
             else:
                 st.success("✓ Scope has been confirmed")
+                
+                if previously_processed:
+                    if st.button("Continue to Topics"):
+                        st.session_state.skip_to_topics = True
+                        st.experimental_rerun()
+                
                 return scope_data
         else:
             st.warning("No scope text was extracted.")
@@ -133,6 +167,13 @@ def render_scope_extraction(document_info: Dict[str, Any]) -> Optional[Dict[str,
                             st.session_state.manual_scope_selection = False
                             st.session_state.scope_confirmed = True
                             st.success("Scope confirmed!")
+                            
+                            if previously_processed:
+                                # Add button to continue to topics if this is a previously processed document
+                                if st.button("Continue to Topics"):
+                                    st.session_state.skip_to_topics = True
+                                    
+                            st.experimental_rerun()  # Rerun to update UI with confirmed status
                             return result["scope"]
                         else:
                             st.error(f"Error confirming scope: {result.get('message', 'Unknown error')}")

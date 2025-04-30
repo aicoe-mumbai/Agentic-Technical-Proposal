@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from Backend.app.core.config import DB_FILE
 import datetime
 from Backend.app.db.migrations import apply_migrations
+from typing import Optional, Dict
 
 def init_db():
     """Initialize database and create tables if they don't exist"""
@@ -256,10 +257,10 @@ def save_document_content(doc_id: str, topic_id: int, content: str) -> None:
     """Save or update document content for a topic"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('''INSERT INTO document_content (doc_id, topic_id, content)
-                         VALUES (?, ?, ?)
-                         ON CONFLICT(doc_id, topic_id) DO UPDATE SET content = ?''',
-                         (doc_id, topic_id, content, content))
+        # Use INSERT OR REPLACE which works with either primary key or unique constraint
+        cursor.execute('''INSERT OR REPLACE INTO document_content (doc_id, topic_id, content)
+                         VALUES (?, ?, ?)''',
+                         (doc_id, topic_id, content))
         
         # Update document last_accessed timestamp
         current_time = datetime.datetime.now().isoformat()
@@ -267,23 +268,37 @@ def save_document_content(doc_id: str, topic_id: int, content: str) -> None:
                       (current_time, doc_id))
         conn.commit()
 
-def get_document_content(doc_id: str, topic_id: int) -> str:
+def get_document_content(doc_id: str, topic_id: int) -> Optional[str]:
     """Get document content for a topic"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT content FROM document_content WHERE doc_id = ? AND topic_id = ?', 
-                      (doc_id, topic_id))
-        data = cursor.fetchone()
+        cursor.execute('''SELECT content FROM document_content 
+                         WHERE doc_id = ? AND topic_id = ?''',
+                         (doc_id, topic_id))
+        result = cursor.fetchone()
         
-        if data:
-            # Update document last_accessed timestamp
-            current_time = datetime.datetime.now().isoformat()
-            cursor.execute('UPDATE documents SET last_accessed = ? WHERE doc_id = ?', 
-                          (current_time, doc_id))
-            conn.commit()
-            
-            return data[0]
-        return None
+        # Update document last_accessed timestamp
+        current_time = datetime.datetime.now().isoformat()
+        cursor.execute('UPDATE documents SET last_accessed = ? WHERE doc_id = ?', 
+                      (current_time, doc_id))
+        conn.commit()
+        
+        return result[0] if result else None
+
+def get_all_document_content(doc_id: str) -> Dict[int, str]:
+    """Get all content for a document"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT topic_id, content FROM document_content WHERE doc_id = ?', (doc_id,))
+        results = cursor.fetchall()
+        
+        # Update document last_accessed timestamp
+        current_time = datetime.datetime.now().isoformat()
+        cursor.execute('UPDATE documents SET last_accessed = ? WHERE doc_id = ?', 
+                      (current_time, doc_id))
+        conn.commit()
+        
+        return {row[0]: row[1] for row in results}
 
 # Apply database migrations instead of directly initializing the DB
 apply_migrations()

@@ -8,9 +8,9 @@ from Backend.app.models.models import (
     ContentGenerationResponse, ChatRequest, ChatResponse
 )
 from Backend.app.utils.rag_agent import RAGAgent
-from Backend.app.db.database import get_template_by_name
-from Backend.app.core.config import UPLOADS_DIR
-from Backend.app.api.documents import active_documents
+from Backend.app.db.database import get_template_by_name, get_document, get_document_scope
+from Backend.app.core.config import UPLOADS_DIR, PROJECTS_DIR
+from Backend.app.core.state import active_documents
 import openpyxl
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -67,7 +67,6 @@ async def generate_topics(document_name: str, template_name: str):
     toc = template.get("project_TOC") if template else None
     if not toc:
         raise HTTPException(status_code=400, detail=f"Template '{template_name}' has no ToC defined")
-    print(toc)
     # Build prompt
     prompt = f"""
         Develop a hierarchical Table of Contents (ToC) by validating the content of the uploaded Statement of Technical Requirements (SOTR) document against the provided Example ToC.
@@ -108,7 +107,6 @@ async def generate_topics(document_name: str, template_name: str):
         2) Why topics removed
         3) Annotations
         """
-    print(prompt)
     # Generate topics
     try:
         raw_output = agent.request_invoker({"input": prompt})
@@ -190,8 +188,7 @@ async def generate_content(
         logger.info("Sending content prompt to agent")
         try:
             # Send to agent
-            result = agent.analyze_query({"input": combined_prompt})
-            content = result.get("output", "")
+            content = agent.request_invoker({"input": combined_prompt})
             
             if not content:
                 raise ValueError("Empty response from agent")

@@ -33,6 +33,9 @@ def render_topics_generation(document_info: Dict[str, Any], template_name: str) 
         
     if "topics_finalized" not in st.session_state:
         st.session_state.topics_finalized = False
+        
+    if "editing_topics" not in st.session_state:
+        st.session_state.editing_topics = False
     
     # Check for previously generated topics
     if not st.session_state.topics_data:
@@ -80,51 +83,101 @@ def render_topics_generation(document_info: Dict[str, Any], template_name: str) 
         
         st.subheader("Generated Topics")
         
-        # Container for topics
-        st.markdown('<div class="topics-container">', unsafe_allow_html=True)
+        # Container for topics with edit button
+        topics_container, edit_btn_container = st.columns([9, 1])
         
-        for i, topic in enumerate(topics):
-            # Process topic data
-            topic_text = topic.get("text", "")
-            topic_number = topic.get("number", "")
-            topic_level = topic.get("level", 0)
-            topic_status = topic.get("status", "keep")
-            topic_page = topic.get("page", None)
-            
-            # Create a unique key for the topic
-            topic_key = f"topic_{i}"
-            
-            # Determine the indentation based on level
-            indent = "&nbsp;" * (4 * (topic_level - 1)) if topic_level > 0 else ""
-            
-            # Add number if available
-            topic_display = f"{topic_number} {topic_text}" if topic_number else topic_text
-            
-            # Add page reference if available
-            page_ref = f" (page {topic_page})" if topic_page else ""
-            
-            # Determine CSS class based on status
-            css_class = f"topic-item {topic_status}"
-            
-            # Create edit icon
-            edit_icon = "✏️"
-            
-            # Create the topic item with edit icon
-            st.markdown(
-                f'<div class="{css_class}" id="{topic_key}">{indent}{topic_display}{page_ref}'
-                f'<span style="float:right">{edit_icon}</span></div>',
-                unsafe_allow_html=True
-            )
-            
-            # Allow editing if user clicks icon (not fully functional in Streamlit)
-            # In a real application, add JavaScript for click handling
-            if st.checkbox(f"Edit {topic_text}", key=f"edit_{topic_key}", label_visibility="collapsed"):
-                edited_topic = st.text_input(f"Edit Topic", value=topic_text, key=f"edit_input_{topic_key}")
-                if st.button(f"Save", key=f"save_{topic_key}"):
-                    topic["text"] = edited_topic
+        with edit_btn_container:
+            # Edit button at the top right
+            edit_clicked = st.button("✏️", help="Edit Topics")
+            if edit_clicked:
+                st.session_state.editing_topics = not st.session_state.editing_topics
+                st.experimental_rerun()
+        
+        with topics_container:
+            # Create a text area for editing all topics at once if in edit mode
+            if st.session_state.editing_topics:
+                # Prepare topics text for editing
+                topic_lines = []
+                for topic in topics:
+                    topic_text = topic.get("text", "")
+                    topic_number = topic.get("number", "")
+                    topic_level = topic.get("level", 0)
+                    indent = "    " * (topic_level - 1) if topic_level > 0 else ""
+                    topic_display = f"{indent}{topic_number} {topic_text}" if topic_number else f"{indent}{topic_text}"
+                    topic_lines.append(topic_display)
+                
+                # Join all topics into a single text
+                all_topics_text = "\n".join(topic_lines)
+                
+                # Show editable text area
+                edited_topics_text = st.text_area("Edit Topics", value=all_topics_text, height=400)
+                
+                # Save button for edited topics
+                if st.button("Save Topics"):
+                    # Parse edited text back into topics
+                    new_topics = []
+                    for i, line in enumerate(edited_topics_text.split("\n")):
+                        if line.strip():
+                            # Determine the indentation level
+                            indent_count = len(line) - len(line.lstrip())
+                            level = (indent_count // 4) + 1
+                            
+                            # Extract topic number and text
+                            trimmed_line = line.strip()
+                            parts = trimmed_line.split(" ", 1)
+                            
+                            if len(parts) > 1 and parts[0].replace(".", "").isdigit():
+                                number = parts[0]
+                                text = parts[1].strip()
+                            else:
+                                number = ""
+                                text = trimmed_line
+                            
+                            # Create topic dictionary
+                            topic_dict = {
+                                "text": text,
+                                "number": number,
+                                "level": level,
+                                "status": topics[i].get("status", "keep") if i < len(topics) else "keep",
+                                "page": topics[i].get("page") if i < len(topics) else None
+                            }
+                            new_topics.append(topic_dict)
+                    
+                    # Update topics in session state
+                    st.session_state.topics_data["topics"] = new_topics
+                    st.session_state.editing_topics = False
                     st.experimental_rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                # Display topics in a container
+                st.markdown('<div class="topics-container">', unsafe_allow_html=True)
+                
+                for topic in topics:
+                    # Process topic data
+                    topic_text = topic.get("text", "")
+                    topic_number = topic.get("number", "")
+                    topic_level = topic.get("level", 0)
+                    topic_status = topic.get("status", "keep")
+                    topic_page = topic.get("page", None)
+                    
+                    # Determine the indentation based on level
+                    indent = "&nbsp;" * (4 * (topic_level - 1)) if topic_level > 0 else ""
+                    
+                    # Add number if available
+                    topic_display = f"{topic_number} {topic_text}" if topic_number else topic_text
+                    
+                    # Add page reference if available
+                    page_ref = f" (page {topic_page})" if topic_page else ""
+                    
+                    # Determine CSS class based on status
+                    css_class = f"topic-item {topic_status}"
+                    
+                    # Create the topic item
+                    st.markdown(
+                        f'<div class="{css_class}">{indent}{topic_display}{page_ref}</div>',
+                        unsafe_allow_html=True
+                    )
+                
+                st.markdown('</div>', unsafe_allow_html=True)
         
         # If topics need review, give option to view raw response
         if any(topic.get("status") == "remove" for topic in topics):

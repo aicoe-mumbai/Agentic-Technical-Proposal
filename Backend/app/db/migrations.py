@@ -135,6 +135,43 @@ def migration_003_add_last_accessed_to_documents():
     record_migration('003_add_last_accessed_to_documents')
     print("Applied migration: 003_add_last_accessed_to_documents")
 
+def migration_004_add_unique_constraint_to_document_content():
+    """Add unique constraint to document_content for doc_id and topic_id"""
+    if is_migration_applied('004_add_unique_constraint_to_document_content'):
+        return
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Create a new table with the unique constraint
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS document_content_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_id TEXT,
+                topic_id INTEGER,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(doc_id) REFERENCES documents(doc_id),
+                FOREIGN KEY(topic_id) REFERENCES document_topics(id),
+                UNIQUE(doc_id, topic_id)
+            )
+        ''')
+        
+        # Copy data from old table to new table
+        cursor.execute('''
+            INSERT OR IGNORE INTO document_content_new (id, doc_id, topic_id, content, created_at)
+            SELECT id, doc_id, topic_id, content, created_at FROM document_content
+        ''')
+        
+        # Drop old table and rename new table
+        cursor.execute('DROP TABLE IF EXISTS document_content')
+        cursor.execute('ALTER TABLE document_content_new RENAME TO document_content')
+        
+        conn.commit()
+    
+    record_migration('004_add_unique_constraint_to_document_content')
+    print("Applied migration: 004_add_unique_constraint_to_document_content")
+
 def apply_migrations():
     """Apply all migrations in sequence"""
     print("Checking and applying database migrations...")
@@ -144,7 +181,8 @@ def apply_migrations():
     migrations = [
         migration_001_initial_schema,
         migration_002_add_is_confirmed_to_topics,
-        migration_003_add_last_accessed_to_documents
+        migration_003_add_last_accessed_to_documents,
+        migration_004_add_unique_constraint_to_document_content
     ]
     
     # Apply each migration

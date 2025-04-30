@@ -70,6 +70,67 @@ CUSTOM_CSS = """
     background-color: white;
 }
 
+.document-canvas {
+    border: 1px solid #ddd;
+    padding: 2rem;
+    margin: 1rem 0;
+    border-radius: 5px;
+    background-color: white;
+    min-height: 800px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.document-canvas h1, .document-canvas h2, .document-canvas h3, .document-canvas h4 {
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+    font-weight: bold;
+}
+
+.document-canvas h1 {
+    font-size: 1.8rem;
+    text-align: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 1rem;
+}
+
+.document-canvas h2 {
+    font-size: 1.5rem;
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 0.5rem;
+}
+
+.document-canvas h3 {
+    font-size: 1.3rem;
+}
+
+.document-canvas h4 {
+    font-size: 1.1rem;
+}
+
+.document-canvas p {
+    margin-bottom: 1rem;
+    line-height: 1.6;
+    text-align: justify;
+}
+
+.document-canvas ul, .document-canvas ol {
+    margin-bottom: 1rem;
+    padding-left: 2rem;
+}
+
+.document-canvas li {
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+}
+
+.document-canvas strong {
+    font-weight: bold;
+}
+
+.document-canvas em {
+    font-style: italic;
+}
+
 .right-sidebar, .left-sidebar {
     position: fixed;
     height: 100vh;
@@ -105,6 +166,14 @@ CUSTOM_CSS = """
         position: relative;
         width: 100%;
         height: auto;
+    }
+}
+
+@media print {
+    .document-canvas {
+        border: none;
+        box-shadow: none;
+        padding: 0;
     }
 }
 </style>

@@ -5,7 +5,16 @@ from langchain_core.documents import Document
 from tqdm import tqdm
 from typing import List, Optional, Union, Dict, Any
 import os
+import subprocess
 from Backend.app.core.state import active_documents
+
+def check_tesseract_installed() -> bool:
+    """Check if Tesseract OCR is installed on the system"""
+    try:
+        result = subprocess.run(["tesseract", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
 
 def clean_string(input_string: str) -> str:
     """Clean and normalize a string by removing extra whitespace"""

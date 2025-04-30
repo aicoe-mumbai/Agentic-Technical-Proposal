@@ -2,8 +2,8 @@ import logging
 from langchain.agents import initialize_agent
 from langchain.tools import Tool, StructuredTool
 from typing import Dict, List, Any, Optional, Tuple
-from langchain_google_genai import ChatGoogleGenerativeAI
-# from langchain.llms import HuggingFaceEndpoint
+# from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.llms import HuggingFaceEndpoint
 from langchain.callbacks import StdOutCallbackHandler
 from Backend.app.core.config import LLM_ENDPOINT
 from Backend.app.utils.vector_utils import process_query
@@ -20,13 +20,13 @@ class RAGAgent:
     def __init__(self, pdf_path: str, data_dict: Dict[str, str]):
         self.pdf_path = pdf_path
         self.data_dict = data_dict
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-001",
-            temperature=0,
-            convert_system_message_to_human=True,
-            api_key="AIzaSyD63fdWAO6j5ByW7Wajq3uEZ6TEA9L0ic4"
-        )
-        # self.llm = HuggingFaceEndpoint(endpoint_url = endpoint)
+        # self.llm = ChatGoogleGenerativeAI(
+        #     model="gemini-2.0-flash-001",
+        #     temperature=0,
+        #     convert_system_message_to_human=True,
+        #     api_key=""
+        # )
+        self.llm = HuggingFaceEndpoint(endpoint_url = endpoint)
         self.agent = None
         self.callbacks = [StdOutCallbackHandler()]
         logger.info(f"Initializing RAG agent for {pdf_path}")

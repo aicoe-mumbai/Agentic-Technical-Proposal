@@ -2,15 +2,17 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Background
 from fastapi.responses import JSONResponse
 import os
 import shutil
+import time
+import logging
 from typing import List, Dict, Any, Optional
-import subprocess
+from pydantic import BaseModel
 
 from Backend.app.models.models import (
     DocumentUploadResponse, ScopeExtractionResponse, 
     ScopeConfirmationRequest, QueryRequest, RangeQueryRequest,
     TopicListRequest
 )
-from Backend.app.utils.pdf_utils import extract_text_from_pdf
+from Backend.app.utils.pdf_utils import extract_text_from_pdf, check_tesseract_installed
 from Backend.app.utils.vector_utils import initialize_vector_db, process_query
 from Backend.app.utils.rag_agent import RAGAgent
 from Backend.app.core.config import UPLOADS_DIR
@@ -18,18 +20,11 @@ from Backend.app.core.state import active_documents
 from Backend.app.db.database import (
     save_document, get_document, update_document_status,
     save_document_scope, get_document_scope,
-    save_document_topics, get_document_topics
+    save_document_topics, get_document_topics,
+    save_document_content, get_document_content
 )
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
-def check_tesseract_installed():
-    """Check if tesseract is installed and accessible"""
-    try:
-        subprocess.run(["tesseract", "--version"], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
@@ -96,7 +91,7 @@ async def document_status(filename: str):
     }
 
 @router.get("/{filename}/scope", response_model=ScopeExtractionResponse)
-async def extract_document_scope(filename: str):
+async def extract_document_scope(filename: str, cache: bool = True):
     """Extract the scope from the document"""
     file_path = os.path.join(UPLOADS_DIR, filename)
     
@@ -111,7 +106,7 @@ async def extract_document_scope(filename: str):
     
     # Check if scope already exists
     existing_scope = get_document_scope(doc_id)
-    if existing_scope and existing_scope.get("is_confirmed", False):
+    if cache and existing_scope and existing_scope.get("is_confirmed", False):
         # Update active_documents with the existing scope
         if doc_id not in active_documents:
             active_documents[doc_id] = {
@@ -127,6 +122,7 @@ async def extract_document_scope(filename: str):
             
         return existing_scope
     
+    # If cache is False or no existing confirmed scope, extract new scope
     # Initialize RAG agent for scope extraction
     agent = RAGAgent(file_path, {})
     scope_data = agent.extract_scope()
@@ -353,8 +349,11 @@ async def query_document_endpoint(filename: str, request: QueryRequest):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"Document {filename} not found")
     
+    doc_id = os.path.basename(file_path)
     query = request.query
-    result = process_query(query)
+    
+    # Use document-specific collection
+    result = process_query(query, doc_id=doc_id)
     
     return {"result": result}
 
@@ -366,9 +365,72 @@ async def range_query_document_endpoint(filename: str, request: RangeQueryReques
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"Document {filename} not found")
     
+    doc_id = os.path.basename(file_path)
+    
     result = process_query(
         request.query,
-        result_range=(request.start_idx, request.end_idx)
+        result_range=(request.start_idx, request.end_idx),
+        doc_id=doc_id
     )
     
     return {"result": result}
+
+class ContentSaveRequest(BaseModel):
+    """Content save request model"""
+    topic_id: int
+    content: str
+
+@router.post("/{filename}/content", response_model=dict)
+async def save_document_content_endpoint(
+    filename: str, request: ContentSaveRequest
+):
+    """Save content for a document topic"""
+    file_path = os.path.join(UPLOADS_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Document {filename} not found")
+    
+    doc_id = os.path.basename(file_path)
+    
+    # Save content to database
+    save_document_content(doc_id, request.topic_id, request.content)
+    
+    return {"success": True, "message": "Content saved successfully"}
+
+@router.post("/{filename}/content/bulk", response_model=dict)
+async def save_document_content_bulk_endpoint(
+    filename: str, request: List[ContentSaveRequest]
+):
+    """Save content for multiple document topics at once"""
+    file_path = os.path.join(UPLOADS_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Document {filename} not found")
+    
+    doc_id = os.path.basename(file_path)
+    
+    # Save all content items to database
+    for item in request:
+        save_document_content(doc_id, item.topic_id, item.content)
+    
+    return {"success": True, "message": f"Saved content for {len(request)} topics successfully"}
+
+@router.get("/{filename}/content/{topic_id}", response_model=dict)
+async def get_document_content_endpoint(
+    filename: str, topic_id: int
+):
+    """Get content for a document topic"""
+    file_path = os.path.join(UPLOADS_DIR, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Document {filename} not found")
+    
+    doc_id = os.path.basename(file_path)
+    
+    # Get content from database
+    content = get_document_content(doc_id, topic_id)
+    
+    if not content:
+        return {"content": "", "exists": False}
+    
+    return {"content": content, "exists": True}

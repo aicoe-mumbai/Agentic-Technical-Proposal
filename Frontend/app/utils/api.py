@@ -2,6 +2,7 @@ import requests
 import json
 import streamlit as st
 from typing import Dict, List, Optional, Any, Union
+import time
 
 from Frontend.app.config import API_BASE_URL, API_V1_PATH
 
@@ -82,10 +83,15 @@ class ApiClient:
             st.error(f"Error checking document status: {str(e)}")
             return {"status": "error", "message": str(e)}
     
-    def extract_document_scope(self, filename: str) -> Dict[str, Any]:
+    def extract_document_scope(self, filename: str, cache: bool = True) -> Dict[str, Any]:
         """Extract scope from document"""
         try:
-            response = requests.get(self._get_url(f"/documents/{filename}/scope"))
+            url = self._get_url(f"/documents/{filename}/scope")
+            if not cache:
+                # Add a timestamp parameter to bypass any caching
+                url += f"?cache=false&t={int(time.time())}"
+                
+            response = requests.get(url)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -157,6 +163,45 @@ class ApiClient:
         except Exception as e:
             st.error(f"Error generating content: {str(e)}")
             return {"content": f"Error: {str(e)}", "topic": topic}
+    
+    def save_document_content(self, document_name: str, topic_id: int, content: str) -> Dict[str, Any]:
+        """Save content for a document topic"""
+        try:
+            data = {"topic_id": topic_id, "content": content}
+            response = requests.post(
+                self._get_url(f"/documents/{document_name}/content"),
+                json=data
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error saving document content: {str(e)}")
+            return {"success": False, "message": str(e)}
+    
+    def save_document_content_bulk(self, document_name: str, content_items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Save content for multiple document topics at once"""
+        try:
+            response = requests.post(
+                self._get_url(f"/documents/{document_name}/content/bulk"),
+                json=content_items
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error saving bulk document content: {str(e)}")
+            return {"success": False, "message": str(e)}
+    
+    def get_document_content(self, document_name: str, topic_id: int) -> Dict[str, Any]:
+        """Get content for a document topic"""
+        try:
+            response = requests.get(
+                self._get_url(f"/documents/{document_name}/content/{topic_id}")
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error retrieving document content: {str(e)}")
+            return {"content": "", "exists": False}
     
     def chat_with_document(
         self, document_name: str, template_name: str, message: str, history: List[Dict[str, str]]
