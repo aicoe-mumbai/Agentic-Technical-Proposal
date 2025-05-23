@@ -21,6 +21,7 @@ langchain
 langchain_community
 langchain-core
 langchain-huggingface
+langchain-google-genai
 huggingface-hub
 
 # Utilities

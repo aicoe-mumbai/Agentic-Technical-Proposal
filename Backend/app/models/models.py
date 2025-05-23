@@ -22,6 +22,21 @@ class AllTemplatesResponse(BaseModel):
     """Response model for retrieving all templates"""
     templates: Dict[str, Dict[str, str]]
 
+class TemplateUpdateRequest(BaseModel):
+    """Request model for updating an existing template"""
+    project_TOC: str
+    # We can add excel_file: Optional[UploadFile] = File(None) later if needed for file updates
+
+class DocumentSummaryItem(BaseModel):
+    doc_id: str # This is typically the filename
+    filename: str # Original filename, could be same as doc_id
+    status: str
+    created_at: Optional[str] = None # Or datetime
+    total_pages: Optional[int] = None
+
+class AllDocumentsResponse(BaseModel):
+    documents: List[DocumentSummaryItem]
+
 class DocumentUploadResponse(BaseModel):
     """Response model for document upload"""
     filename: str

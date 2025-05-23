@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from Backend.app.core.config import DB_FILE
 import datetime
 from Backend.app.db.migrations import apply_migrations
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 
 def init_db():
     """Initialize database and create tables if they don't exist"""
@@ -106,6 +106,18 @@ def delete_template(project_name):
         cursor.execute('''DELETE FROM templates WHERE project_name = ?''', (project_name,))
         conn.commit()
         return cursor.rowcount > 0
+
+def get_all_documents_summary() -> List[Dict[str, Any]]:
+    """Get a summary list of all documents from the database."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        # Fetching fields relevant for a dashboard summary, ordered by creation time descending
+        cursor.execute('''SELECT doc_id, filename, status, created_at, total_pages 
+                         FROM documents 
+                         ORDER BY created_at DESC''')
+        columns = [column[0] for column in cursor.description]
+        documents = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return documents
 
 # Document operations
 def save_document(doc_id: str, filename: str, file_path: str, status: str = "uploading", message: str = None) -> None:

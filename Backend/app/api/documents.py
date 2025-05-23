@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from Backend.app.models.models import (
     DocumentUploadResponse, ScopeExtractionResponse, 
     ScopeConfirmationRequest, QueryRequest, RangeQueryRequest,
-    TopicListRequest
+    TopicListRequest,
+    AllDocumentsResponse
 )
 from Backend.app.utils.pdf_utils import extract_text_from_pdf, check_tesseract_installed
 from Backend.app.utils.vector_utils import initialize_vector_db, process_query
@@ -21,10 +22,17 @@ from Backend.app.db.database import (
     save_document, get_document, update_document_status,
     save_document_scope, get_document_scope,
     save_document_topics, get_document_topics,
-    save_document_content, get_document_content
+    save_document_content, get_document_content,
+    get_all_documents_summary
 )
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+@router.get("/", response_model=AllDocumentsResponse)
+async def list_all_documents():
+    """List all uploaded documents with their summary information."""
+    documents_summary = get_all_documents_summary()
+    return {"documents": documents_summary}
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):

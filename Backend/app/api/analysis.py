@@ -9,7 +9,7 @@ from Backend.app.models.models import (
 )
 from Backend.app.utils.rag_agent import RAGAgent
 from Backend.app.db.database import get_template_by_name, get_document, get_document_scope
-from Backend.app.core.config import UPLOADS_DIR, PROJECTS_DIR
+from Backend.app.core.config import UPLOADS_DIR, PROJECTS_DIR, BASE_DIR as PROJECT_ROOT
 from Backend.app.core.state import active_documents
 import openpyxl
 
@@ -23,12 +23,20 @@ def get_template_data_dict(template_name: str) -> dict:
     if not template:
         raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
 
-    file_path = template.get("file_path")
-    if not file_path or not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"Template file for '{template_name}' not found")
+    relative_file_path = template.get("file_path")
+    if not relative_file_path:
+        raise HTTPException(status_code=404, detail=f"Template file path not defined for '{template_name}'")
+
+    # Construct absolute path
+    absolute_file_path = os.path.join(PROJECT_ROOT, relative_file_path)
+    logger.info(f"Constructed absolute path for template '{template_name}': {absolute_file_path}")
+
+    if not os.path.exists(absolute_file_path):
+        logger.error(f"Template file not found at absolute path: {absolute_file_path}")
+        raise HTTPException(status_code=404, detail=f"Template file for '{template_name}' not found at {absolute_file_path}")
 
     try:
-        wb = openpyxl.load_workbook(file_path)
+        wb = openpyxl.load_workbook(absolute_file_path)
         ws = wb.active
         data_dict = {}
         for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
@@ -40,32 +48,65 @@ def get_template_data_dict(template_name: str) -> dict:
         raise HTTPException(status_code=500, detail=f"Error loading template data: {e}")
     
 
-@router.post("/generate-topics/{document_name}/{template_name}", response_model=TopicGenerationResponse)
+@router.post("/generate-topics/{document_name:path}/{template_name}", response_model=TopicGenerationResponse)
 async def generate_topics(document_name: str, template_name: str):
     """Ensure document processed, initialize agent, and generate topics based on scope and template."""
     # Validate document
     doc_path = os.path.join(UPLOADS_DIR, document_name)
+    logger.info(f"Attempting to generate topics for document: {document_name} at path: {doc_path}")
     if not os.path.exists(doc_path):
+        logger.error(f"Document not found at path: {doc_path}")
         raise HTTPException(status_code=404, detail=f"Document '{document_name}' not found")
 
     doc_id = os.path.basename(doc_path)
-    doc_data = active_documents.get(doc_id)
-    if not doc_data or doc_data.get("status") != "processed":
-        raise HTTPException(status_code=400, detail="Document has not been processed or is missing")
+    doc_data_from_state = active_documents.get(doc_id) # Get from in-memory state first
+    logger.info(f"Retrieved doc_data from active_documents for {doc_id}: {doc_data_from_state}")
+
+    # Attempt to get document info from DB if not in active_documents or status incorrect
+    db_doc_info = get_document(doc_id) # Fetch from DB
+    if not db_doc_info or db_doc_info.get("status") != "processed":
+        logger.error(f"Document {doc_id} not found in DB or not processed. DB status: {db_doc_info.get('status') if db_doc_info else 'Not in DB'}")
+        raise HTTPException(status_code=400, detail=f"Document {doc_id} has not been processed or is not found in database.")
 
     # Validate and load template data
     data_dict = get_template_data_dict(template_name)
+    agent = RAGAgent(doc_path, data_dict) # RAGAgent initialization needs doc_path
 
-    agent = RAGAgent(doc_path, data_dict)
+    # Try to get scope from active_documents first, then from DB
+    scope_info = None
+    if doc_data_from_state:
+        scope_info = doc_data_from_state.get("scope")
+        logger.info(f"Scope from active_documents for {doc_id}: {scope_info}")
+    
+    if not scope_info or not scope_info.get("is_confirmed"):
+        logger.info(f"Scope not in active_documents or not confirmed, fetching from DB for {doc_id}")
+        scope_info_from_db = get_document_scope(doc_id) # Fetch from DB
+        if scope_info_from_db and scope_info_from_db.get("is_confirmed"):
+            logger.info(f"Using scope from DB for {doc_id}: {scope_info_from_db}")
+            scope_info = scope_info_from_db
+        else:
+            logger.warning(f"Scope for {doc_id} not found in DB or not confirmed. DB scope: {scope_info_from_db}")
+            # Keep current scope_info (which might be None or unconfirmed from active_documents)
+            # The check below will handle it
 
-    scope_info = doc_data.get("scope")
-    if not scope_info or not scope_info.get("scope_text"):
-        raise HTTPException(status_code=400, detail="Document scope missing or empty. Please extract scope first.")
+    logger.info(f"Final scope_info for {doc_id} before validation: {scope_info}")
+
+    if not scope_info or not scope_info.get("scope_text") or not scope_info.get("is_confirmed"):
+        error_detail = "Document scope missing, empty, or not confirmed. Please extract and confirm scope first."
+        if scope_info and not scope_info.get("is_confirmed"):
+            error_detail = "Document scope has been extracted but not confirmed. Please confirm scope first."
+        elif not scope_info or not scope_info.get("scope_text"):
+            error_detail = "Document scope has not been extracted or is empty. Please extract scope first."
+        logger.error(f"Validation failed: {error_detail} for {doc_id}. Scope text present: {'scope_text' in scope_info if scope_info else False}, Confirmed: {scope_info.get('is_confirmed') if scope_info else False}")
+        raise HTTPException(status_code=400, detail=error_detail)
 
     # Load template TOC
     template = get_template_by_name(template_name)
     toc = template.get("project_TOC") if template else None
+    logger.info(f"Retrieved template '{template_name}' TOC: {'Present' if toc else 'Missing or Empty'}")
+
     if not toc:
+        logger.error(f"Validation failed: Template '{template_name}' has no ToC defined.")
         raise HTTPException(status_code=400, detail=f"Template '{template_name}' has no ToC defined")
     # Build prompt
     prompt = f"""
